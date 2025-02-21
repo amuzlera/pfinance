@@ -4,3 +4,4 @@ plotly==6.0.0
 Requests==2.32.3
 streamlit==1.42.0
 streamlit-aggrid==1.1.0
+openpyxl==3.1.5
