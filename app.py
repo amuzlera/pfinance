@@ -9,7 +9,6 @@ from parsers.visa_resumen_parser import create_df_from_pdf, parse_consumo
 import requests
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 import json
-import random
 import calendar
 from datetime import datetime
 from time import sleep
@@ -42,14 +41,14 @@ TAGS_COLORS_MAP = {tag: color for tag, color in zip(TAGS_NAMES_MAP.keys(), gener
 TAGS_COLORS_MAP["otros"] = "gray" # por que si
 DATA_PATH = "files/edited_data.csv"
 
-def save_to_db(df, db_name='movimientos.db'):
+def save_to_db(df):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS movimientos (
             date TEXT,
             monto REAL,
-            id INTEGER,
+            id TEXT,
             nombre TEXT,
             categoria TEXT,
             alias TEXT,
@@ -76,6 +75,8 @@ def load_db():
     df = read_from_db()
     if 'alias' not in df.columns:
         df['alias'] = ""
+
+    print(df['monto'])
     df['date'] = pd.to_datetime(df['date'])
     df['monto'] = df['monto'].astype(float)
     df['alias'] = df['alias'].fillna('')
@@ -90,17 +91,28 @@ def concat_by_id(df1, df2):
     new_data = df2[~df2['id'].isin(df1['id'])]
     return pd.concat([df1, new_data])
 
-def parse_from_files(df):
-    for file_name in [f for f in os.listdir("files") if f.endswith(VALID_EXTENSIONS)]:
-        file_path = os.path.join("files", file_name)
-        print(file_path)
-        if "movimientos" in file_name:
-            df = concat_by_id(df, parse_movimientos_santander(file_path))
-        elif "Resumen de tarjeta de crédito" in file_name:
-            df = concat_by_id(df, create_df_from_pdf(file_path))
-        elif "download" in file_name:
-            df = concat_by_id(df, parse_transactions_from_mp(file_path))
+def parse_from_files(df, uploaded_files):
+    if uploaded_files:
+        for uploaded_file in uploaded_files:
+            file_name = uploaded_file.name
+            os.makedirs("files", exist_ok=True)
+            file_path = os.path.join('files', file_name)
+            with open(file_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+
+            if "movimientos" in file_name:
+                df = concat_by_id(df, parse_movimientos_santander(file_path))
+            elif "Resumen de tarjeta de crédito" in file_name:
+                df = concat_by_id(df, create_df_from_pdf(file_path))
+            elif "download" in file_name:
+                df = concat_by_id(df, parse_transactions_from_mp(file_path))
     return df
+
+def load_data_from_files(uploaded_files):
+    old_data = load_db()
+    data = parse_from_files(old_data, uploaded_files)
+    data['id'] = data['id'].astype(str)
+    save_to_db(data)
 
 def order_df(df):
     first_columns = ['date', 'alias', 'nombre', 'cuotas', 'monto']
@@ -108,12 +120,6 @@ def order_df(df):
     column_order = first_columns + remaining_columns
     df = df.reindex(columns=column_order)
     return df
-
-def load_data_from_files():
-    old_data = load_db()
-    data = parse_from_files(old_data)
-    data['id'] = data['id'].astype(str)
-    save_to_db(data)
 
 def color_rows(row):
     return ['background-color: {}'.format(TAGS_COLORS_MAP[row['categoria']])] * len(row)
@@ -139,7 +145,7 @@ def generate_id(row):
 def add_expense_form():
     st.subheader("Agregar nuevo gasto")
 
-    date = st.date_input("Fecha", value=datetime.now())
+    date = st.date_input("Fecha", value=datetime.now()).strftime('%Y-%m-%d 00:00:00')
     nombre = st.text_input("Nombre")
     categoria = st.selectbox("Categoría", options=list(TAGS_NAMES_MAP.keys()))
     alias = st.text_input("Alias")
@@ -148,11 +154,11 @@ def add_expense_form():
     if st.button("Agregar gasto"):
         if date and nombre and categoria:
             new_row = {
-                'date': date.strftime('%d-%m-%Y'),
+                'date': date,
                 'nombre': nombre,
                 'categoria': categoria,
                 'alias': alias,
-                'monto': monto
+                'monto': monto.replace('.', '').replace(',', '.')
             }
             new_row['id'] = generate_id(new_row)
 
@@ -260,9 +266,8 @@ def filter_data_by_date(data):
     return data[(data['date'].dt.month == st.session_state.month_index + 1) & (data['date'].dt.year == st.session_state.year)]
 
 def pfinance_app():
-    if st.button("Cargar consumos desde archivos"):
-        load_data_from_files()
-        st.rerun()
+    if uploaded_files := st.file_uploader("Subir archivos", type=VALID_EXTENSIONS, accept_multiple_files=True):
+        load_data_from_files(uploaded_files)
 
     st.title("Gastos")
     create_date_selector()
