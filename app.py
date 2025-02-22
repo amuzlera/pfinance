@@ -62,7 +62,7 @@ ALIAS_NAMES_MAP = get_data_from_db('alias')
 
 
 
-VALID_EXTENSIONS = (".xlsx", ".xls", ".pdf")
+VALID_EXTENSIONS = (".xlsx", ".xls", ".pdf", ".db")
 
 def generate_distinct_colors(n=15):
     colors = px.colors.qualitative.Plotly
