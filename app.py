@@ -46,7 +46,7 @@ def save_data_to_db(data_map, table_name):
     ''')
     for id, tag_name_keywords in enumerate(data_map.items()):
         tag_name, keywords = tag_name_keywords
-        keywords_str = ','.join(keywords)
+        keywords_str = ','.join(set(keywords))
         cursor.execute(f'''
             INSERT OR REPLACE INTO {table_name} (tag_name, keywords, id)
             VALUES (?, ?, ?)
@@ -164,7 +164,10 @@ def color_rows(row):
 def add_tags(data, tags_map, col_name, default_tag='otros'):
     for tag, keywords in tags_map.items():
         for keyword in keywords:
-            data.loc[data['nombre'].str.contains(keyword, case=False), col_name] = tag
+            if tag == "ignore":
+                data.loc[data['nombre'].str.lower() == keyword.lower(), col_name] = tag
+            else:
+                data.loc[data['nombre'].str.contains(keyword, case=False), col_name] = tag
     data[col_name] = data[col_name].fillna(default_tag) 
 
     return data
@@ -278,14 +281,7 @@ def filter_data_by_date(data):
 def add_tags_form():
     st.subheader("Agregar nueva etiqueta o alias")
 
-    # Buttons to select between tags and alias
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("tags"):
-            st.session_state.selection = "tags"
-    with col2:
-        if st.button("alias"):
-            st.session_state.selection = "alias"
+    st.session_state.selection = st.selectbox("Seleccionar tipo", ["tags", "alias"])
 
     # Default to tags if not selected
     if 'selection' not in st.session_state:
@@ -386,7 +382,8 @@ def create_category_buttons():
         if cols[i].button(category):
             st.session_state.selected_category = category
 
-
+def filter_ignore_tags(data):
+    return data[data['categoria'] != 'ignore']
 
 def pfinance_app():
     create_custom_range_picker()
@@ -403,6 +400,7 @@ def pfinance_app():
     data = add_tags(data, tags_map=TAGS_NAMES_MAP, col_name='categoria')
     data = add_tags(data, tags_map=ALIAS_NAMES_MAP, col_name='alias', default_tag="")
     data = filter_data_by_date(data)
+    data = filter_ignore_tags(data)
     create_category_buttons()
 
 
@@ -448,6 +446,8 @@ def pfinance_app():
     add_tags_form()
     add_expense_form()
     search_expense_panel()
+
+
 
 
 if __name__ == "__main__":
