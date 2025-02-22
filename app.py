@@ -136,6 +136,12 @@ def parse_from_files(df, uploaded_files):
             file_path = os.path.join('files', file_name)
             with open(file_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
+            
+            if file_name.endswith(".db"):
+                with open(file_path, "rb") as f:
+                    db_data = f.read()
+                with open(DB_NAME, "wb") as f:
+                    f.write(db_data)
 
             if "movimientos" in file_name:
                 df = concat_by_id(df, parse_movimientos_santander(file_path))
@@ -446,9 +452,11 @@ def pfinance_app():
     add_tags_form()
     add_expense_form()
     search_expense_panel()
+    download_db()
 
-
-
+def download_db():
+    st.download_button(label="Descargar base de datos", data=open('movimientos.db', 'rb').read(), file_name='movimientos.db', mime='application/octet-stream')
+    st.success("Base de datos descargada con éxito.")
 
 if __name__ == "__main__":
     pfinance_app()
