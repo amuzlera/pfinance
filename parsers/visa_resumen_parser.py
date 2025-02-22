@@ -1,10 +1,17 @@
 import pdfplumber
 import pandas as pd
 import re
+import requests
 from datetime import datetime
 
 MONTHS = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre")
 
+
+def transform_usd_to_ars(data):
+    usd_data = requests.get("https://dolarapi.com/v1/dolares/blue").json()
+    usd_to_ars = (usd_data["compra"] + usd_data["venta"]) / 2
+    data['monto'] = data.apply(lambda row: row['monto'] * usd_to_ars if "usd" in row['nombre'].lower() else row['monto'], axis=1)
+    return data
 
 def get_consumos(text):
     # Dividir el texto en líneas
@@ -80,6 +87,7 @@ def create_df_from_pdf(pdf_path):
     df['date'] = pd.to_datetime(df['date'])
     df.drop(columns=["month", "year", "day"], inplace=True)
     df["monto"] = df["monto"].astype(float)
+    df = transform_usd_to_ars(df)
     return df
 
 def chech_total_amounts():
