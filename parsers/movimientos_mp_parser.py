@@ -2,7 +2,6 @@ import pdfplumber
 import pandas as pd
 import re
 
-EXCLUDE_ROWS_CONTAINING = ["andres muzlera", "ANDRES", "MUZLERA", "Andresmuzlera"]
 def create_lines_list_from_text(text):
     lines = text.split("\n")
     transaction, transaction_part = [], []
@@ -37,7 +36,6 @@ def parse_df(df):
     df['date'] = pd.to_datetime(df['date'], format='%d-%m-%Y', errors='coerce')
     df['monto'] = (df['monto'].str.replace('.', '').str.replace(',', '.'))
     df['monto'] = (df['monto'].astype(float) * -1)
-    df = df[~df['nombre'].str.contains('|'.join(EXCLUDE_ROWS_CONTAINING), na=False)]
     return df
 
 def parse_transactions_from_mp(pdf_path):
