@@ -6,3 +6,4 @@ streamlit==1.42.0
 streamlit-aggrid==1.1.0
 streamlit-date-picker==0.0.5
 openpyxl==3.1.5
+streamlit-local-storage==0.0.25
