@@ -3,38 +3,20 @@ import streamlit as st
 import plotly.express as px
 import pandas as pd
 import os
+import base64
 from parsers.movimientos_mp_parser import parse_transactions_from_mp
 from parsers.movimientos_santander_parser import parse_movimientos_santander
 from parsers.visa_resumen_parser import create_df_from_pdf, parse_consumo
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
-import calendar
+from streamlit_local_storage import LocalStorage
 from datetime import datetime, timedelta
 from time import sleep
 import hashlib
-from streamlit_date_picker import date_range_picker, date_picker, PickerType
+from streamlit_date_picker import date_range_picker, PickerType
+from constants import TAGS_COLORS_MAP, TAGS_NAMES_MAP, ALIAS_NAMES_MAP, VALID_EXTENSIONS, DB_NAME
 
-DB_NAME = "movimientos.db"
 
-def get_data_from_db(table_name):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute(f'''
-        CREATE TABLE IF NOT EXISTS {table_name} (
-            tag_name TEXT,
-            keywords TEXT,
-            id TEXT PRIMARY KEY
-        )
-    ''')
-    cursor.execute(f'SELECT tag_name, keywords FROM {table_name}')
-    rows = cursor.fetchall()
-    conn.close()
-    data_map = {}
-    for row in rows:
-        tag_name, keywords = row
-        data_map[tag_name] = keywords.split(',')
-    return data_map
-
-def save_data_to_db(data_map, table_name):
+def save_tags_to_db(data_map, table_name):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute(f'''
@@ -51,29 +33,42 @@ def save_data_to_db(data_map, table_name):
             INSERT OR REPLACE INTO {table_name} (tag_name, keywords, id)
             VALUES (?, ?, ?)
         ''', (tag_name, keywords_str, id))
+    commit_and_close(conn)
+
+def save_db_to_localstore():
+    try:
+        with open(DB_NAME, 'rb') as db_file:
+            db_data = db_file.read()
+        db_data_base64 = base64.b64encode(db_data).decode('utf-8')
+        local_storage = LocalStorage()
+        local_storage.setItem('localstore_db', db_data_base64)
+        st.success("Base de datos guardada en LocalStore con éxito.")
+    except Exception as e:
+        st.error(f"Error al guardar la base de datos en LocalStore: {e}")
+
+def commit_and_close(conn):
     conn.commit()
     conn.close()
+    save_db_to_localstore()
 
-
-
-TAGS_NAMES_MAP = get_data_from_db('tags')
-ALIAS_NAMES_MAP = get_data_from_db('alias')
-
-
-
-
-VALID_EXTENSIONS = (".xlsx", ".xls", ".pdf", ".db")
-
-def generate_distinct_colors(n=15):
-    colors = px.colors.qualitative.Plotly
-    if n <= len(colors):
-        return colors[:n]
-    else:
-        return colors * (n // len(colors)) + colors[:n % len(colors)]
-
-TAGS_COLORS_MAP = {tag: color for tag, color in zip(TAGS_NAMES_MAP.keys(), generate_distinct_colors(len(TAGS_NAMES_MAP)))}
-TAGS_COLORS_MAP["otros"] = "gray" # por que si
-DATA_PATH = "files/edited_data.csv"
+def load_db_from_localstore(df):
+    try:
+        local_storage = LocalStorage()
+        db_data_base64 = local_storage.getItem('localstore_db')
+        if db_data_base64:
+            db_data = base64.b64decode(db_data_base64)
+            db_name = f'{DB_NAME}-local_store'
+            with open(db_name, 'wb') as db_file:
+                db_file.write(db_data)
+            df_local_store = pd.read_sql_query('SELECT * FROM movimientos', sqlite3.connect(db_name))
+            df_combined = concat_by_id(df, df_local_store)
+            return df_combined
+        else:
+            st.warning("No se encontró ninguna base de datos en LocalStore.")
+            return df
+    except Exception as e:
+        st.error(f"Error al cargar la base de datos desde LocalStore: {e}")
+        return df
 
 def save_to_db(df):
     conn = sqlite3.connect(DB_NAME)
@@ -93,8 +88,7 @@ def save_to_db(df):
     existing_df = pd.read_sql_query('SELECT * FROM movimientos', conn)
     new_df = df[~df['id'].isin(existing_df['id'])]
     new_df.to_sql('movimientos', conn, if_exists='append', index=False)
-    conn.commit()
-    conn.close()
+    commit_and_close(conn)
 
 def read_from_db():
     conn = sqlite3.connect(DB_NAME)
@@ -107,7 +101,8 @@ def read_from_db():
     conn = sqlite3.connect(DB_NAME)
     df = pd.read_sql_query('SELECT * FROM movimientos', conn)
     conn.close()
-    return df
+    df_combined = load_db_from_localstore(df)
+    return df_combined
 
 def load_db():
     df = read_from_db()
@@ -143,7 +138,7 @@ def parse_from_files(df, uploaded_files):
                 with open(DB_NAME, "wb") as f:
                     f.write(db_data)
 
-            if "movimientos" in file_name:
+            elif "movimientos" in file_name and file_name.endswith(".xlsx"):
                 df = concat_by_id(df, parse_movimientos_santander(file_path))
             elif "Resumen de tarjeta de crédito" in file_name:
                 df = concat_by_id(df, create_df_from_pdf(file_path))
@@ -156,6 +151,12 @@ def load_data_from_files(uploaded_files):
     data = parse_from_files(old_data, uploaded_files)
     data['id'] = data['id'].astype(str)
     save_to_db(data)
+    # Eliminar archivos subidos después de procesarlos
+    for uploaded_file in uploaded_files:
+        file_name = uploaded_file.name
+        file_path = os.path.join('files', file_name)
+        if os.path.exists(file_path):
+            os.remove(file_path)
 
 def order_df(df):
     first_columns = ['date', 'nombre', 'monto', 'cuotas', 'alias']
@@ -208,8 +209,7 @@ def add_expense_form():
                 INSERT INTO movimientos (date, nombre, categoria, alias, monto, id)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (new_row['date'], new_row['nombre'], new_row['categoria'], new_row['alias'], new_row['monto'], new_row['id']))
-            conn.commit()
-            conn.close()
+            commit_and_close(conn)
 
             st.success("Gasto agregado con éxito.")
             st.rerun()
@@ -265,8 +265,9 @@ def create_month_range_picker():
                                         start=default_start, end=default_end,
                                         key='month_range_picker',
                                         refresh_buttons=refresh_buttons)
-    st.session_state.start_datetime = date_range_string[0]
-    st.session_state.end_datetime = date_range_string[1]
+    if date_range_string:
+        st.session_state.start_datetime = date_range_string[0]
+        st.session_state.end_datetime = date_range_string[1]
 
 def create_custom_range_picker():
     default_start, default_end = datetime.now() - timedelta(days=1), datetime.now()        
@@ -305,7 +306,7 @@ def add_tags_form():
             if tag_name and keywords:
                 new_keywords = [kw.strip() for kw in keywords.split(",")]
                 TAGS_NAMES_MAP[tag_name].extend(new_keywords)
-                save_data_to_db(TAGS_NAMES_MAP, 'tags')
+                save_tags_to_db(TAGS_NAMES_MAP, 'tags')
 
                 st.success(f"Etiqueta '{tag_name}' agregada con éxito.")
             else:
@@ -320,7 +321,7 @@ def add_tags_form():
                     ALIAS_NAMES_MAP[alias_name] = []
                 new_keywords = [kw.strip() for kw in keywords.split(",")]
                 ALIAS_NAMES_MAP[alias_name].extend(new_keywords)
-                save_data_to_db(ALIAS_NAMES_MAP, 'alias')
+                save_tags_to_db(ALIAS_NAMES_MAP, 'alias')
 
                 st.success(f"Alias '{alias_name}' agregado con éxito.")
             else:
@@ -377,8 +378,7 @@ def delete_expense(expense_id, table):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute(f"DELETE FROM {table} WHERE id = ?", (expense_id,))
-    conn.commit()
-    conn.close()
+    commit_and_close(conn)
 
 def create_category_buttons():
     categories = ["todos"] + list(TAGS_NAMES_MAP.keys())
@@ -396,6 +396,7 @@ def pfinance_app():
     create_month_range_picker()
     if uploaded_files := st.file_uploader("Subir archivos", type=VALID_EXTENSIONS, accept_multiple_files=True):
         load_data_from_files(uploaded_files)
+
 
     st.title("Categorias")
 
@@ -455,8 +456,14 @@ def pfinance_app():
     download_db()
 
 def download_db():
-    st.download_button(label="Descargar base de datos", data=open('movimientos.db', 'rb').read(), file_name='movimientos.db', mime='application/octet-stream')
-    st.success("Base de datos descargada con éxito.")
+    try:
+        data = open('movimientos.db', 'rb').read()
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        file_name = f'movimientos_{current_date}.db'
+        if st.download_button(label="Descargar base de datos", data=data, file_name=file_name, mime='application/octet-stream'):
+            st.success("Base de datos descargada con éxito.")
+    except Exception as e:
+        st.error(f"Error al descargar la base de datos: {e}")
 
 if __name__ == "__main__":
     pfinance_app()
