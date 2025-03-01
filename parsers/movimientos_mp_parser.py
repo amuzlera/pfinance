@@ -36,6 +36,7 @@ def parse_df(df):
     df['date'] = pd.to_datetime(df['date'], format='%d-%m-%Y', errors='coerce')
     df['monto'] = (df['monto'].str.replace('.', '').str.replace(',', '.'))
     df['monto'] = (df['monto'].astype(float) * -1)
+    df['origen'] = 'MercadoPago'
     return df
 
 def parse_transactions_from_mp(pdf_path):
@@ -77,7 +78,3 @@ def get_name(part, id):
             for elem in elements_to_remove:
                 nombre = nombre.replace(elem, '')
             return nombre.strip()
-
-if __name__ == "__main__":
-    df = parse_transactions_from_mp("files/download_250217173554.pdf")
-    print(df)

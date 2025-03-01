@@ -28,9 +28,12 @@ def get_data_from_db(table_name):
         data_map[tag_name] = keywords.split(',')
     return data_map
 
+
+SPREADSHEET_NAME = 'finanzas'
+CREDENTIALS_FILE = 'client_secret.json'
 DB_NAME = "movimientos.db"
 TAGS_NAMES_MAP = get_data_from_db('tags')
 ALIAS_NAMES_MAP = get_data_from_db('alias')
-VALID_EXTENSIONS = (".xlsx", ".xls", ".pdf", ".db")
+VALID_EXTENSIONS = (".xlsx", ".xls", ".pdf", ".db", ".json")
 TAGS_COLORS_MAP = {tag: color for tag, color in zip(TAGS_NAMES_MAP.keys(), generate_distinct_colors(len(TAGS_NAMES_MAP)))}
 TAGS_COLORS_MAP["otros"] = "gray" # por que si

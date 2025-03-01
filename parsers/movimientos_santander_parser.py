@@ -36,6 +36,8 @@ def parse_df(df):
     df['nombre'] = df['Descripción'].str.replace('Compra con tarjeta de debito ', '').str.strip()
     df.drop(columns=['Sucursal de Origen', 'Cuenta Corriente', 'Saldo', 'Caja de Ahorro', 'Referencia', 'Fecha', 'Descripción'], inplace=True)
     df = df[~df['nombre'].str.contains("Transf", na=False)]
+    df['origen'] = 'movimientos-santander'
+
     return df
 
 

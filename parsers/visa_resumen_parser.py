@@ -88,6 +88,8 @@ def create_df_from_pdf(pdf_path):
     df.drop(columns=["month", "year", "day"], inplace=True)
     df["monto"] = df["monto"].astype(float)
     df = transform_usd_to_ars(df)
+    df['origen'] = "visa"
+
     return df
 
 def chech_total_amounts():
