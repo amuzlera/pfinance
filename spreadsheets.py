@@ -4,7 +4,9 @@ import gspread
 
 from oauth2client.service_account import ServiceAccountCredentials
 
-from constants import CREDENTIALS_FILE, SPREADSHEET_NAME
+
+SPREADSHEET_NAME = 'finanzas'
+CREDENTIALS_FILE = 'files/client_secret.json'
 
 
 def get_data_from_spreadsheet():
@@ -26,6 +28,7 @@ def spreadsheet_to_pandas(sheet_name):
 
 
 def save_dataframe_to_spreadsheet(sheet_name, dataframe):
+    print(dataframe)
     sheet = get_data_from_spreadsheet()
     try:
         worksheet = sheet.worksheet(sheet_name)

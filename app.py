@@ -1,4 +1,3 @@
-import sqlite3
 import streamlit as st
 import plotly.express as px
 import pandas as pd
@@ -6,72 +5,14 @@ import os
 from parsers.movimientos_mp_parser import parse_transactions_from_mp
 from parsers.movimientos_santander_parser import parse_movimientos_santander
 from parsers.visa_resumen_parser import create_df_from_pdf
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 from datetime import datetime, timedelta
 from time import sleep
 import hashlib
 from streamlit_date_picker import date_range_picker, PickerType
-from constants import CREDENTIALS_FILE, TAGS_COLORS_MAP, TAGS_NAMES_MAP, ALIAS_NAMES_MAP, VALID_EXTENSIONS, DB_NAME
-from spreadsheets import save_dataframe_to_spreadsheet, spreadsheet_to_pandas
+from constants import TAGS_COLORS_MAP, TAGS_NAMES_MAP, ALIAS_NAMES_MAP, VALID_EXTENSIONS, DB_NAME
+from spreadsheets import save_dataframe_to_spreadsheet, spreadsheet_to_pandas, CREDENTIALS_FILE
 
 MOVIMIENTOS = 'movimientos'
-
-
-def save_tags_to_db(data_map, table_name):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute(f'''
-        CREATE TABLE IF NOT EXISTS {table_name} (
-            tag_name TEXT,
-            keywords TEXT,
-            id TEXT PRIMARY KEY
-        )
-    ''')
-    for id, tag_name_keywords in enumerate(data_map.items()):
-        tag_name, keywords = tag_name_keywords
-        keywords_str = ','.join(set(keywords))
-        cursor.execute(f'''
-            INSERT OR REPLACE INTO {table_name} (tag_name, keywords, id)
-            VALUES (?, ?, ?)
-        ''', (tag_name, keywords_str, id))
-    save_table_to_df(conn, table_name)
-
-
-def save_table_to_df(conn, table_name):
-    conn.commit()
-    if table_name is None:
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        tables = cursor.fetchall()
-        for table in tables:
-            table_name = table[0]
-            df = pd.read_sql_query(f'SELECT * FROM {table_name}', conn)
-            save_dataframe_to_spreadsheet(table_name, df)
-    else:
-        df = pd.read_sql_query(f'SELECT * FROM {table_name}', conn)
-        save_dataframe_to_spreadsheet(table_name, df)
-
-
-def save_to_db(df):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS movimientos (
-            date TEXT,
-            monto REAL,
-            id TEXT,
-            nombre TEXT,
-            categoria TEXT,
-            alias TEXT,
-            cuotas TEXT
-            origen TEXT
-        )
-    ''')
-
-    existing_df = pd.read_sql_query(f'SELECT * FROM {MOVIMIENTOS}', conn)
-    new_df = df[~df['id'].isin(existing_df['id'])]
-    new_df.to_sql(MOVIMIENTOS, conn, if_exists='append', index=False)
-    save_table_to_df(conn, table_name=MOVIMIENTOS)
 
 
 def load_db():
@@ -82,7 +23,7 @@ def load_db():
     df['date'] = pd.to_datetime(df['date'])
     df['monto'] = df['monto'].astype(float)
     df['alias'] = df['alias'].fillna('')
-    return order_df(df)
+    st.session_state['movimientos'] = order_df(df)
 
 
 def concat_by_id(df1, df2):
@@ -95,13 +36,21 @@ def concat_by_id(df1, df2):
     return pd.concat([df1, new_data])
 
 
-def parse_from_files(df, uploaded_files):
+def check_for_credentials(uploaded_files):
     if uploaded_files:
         for uploaded_file in uploaded_files:
             file_name = uploaded_file.name
             os.makedirs("files", exist_ok=True)
             if file_name.endswith(".json"):
-                file_name = CREDENTIALS_FILE
+                with open(CREDENTIALS_FILE, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+
+
+def parse_from_files(df, uploaded_files):
+    if uploaded_files:
+        for uploaded_file in uploaded_files:
+            file_name = uploaded_file.name
+            os.makedirs("files", exist_ok=True)
             
             file_path = os.path.join('files', file_name)
             with open(file_path, "wb") as f:
@@ -126,7 +75,7 @@ def load_data_from_files(uploaded_files):
     old_data = load_db()
     data = parse_from_files(old_data, uploaded_files)
     data['id'] = data['id'].astype(str)
-    save_to_db(data)
+    save_dataframe_to_spreadsheet(MOVIMIENTOS, data)
     # Eliminar archivos subidos después de procesarlos
     for uploaded_file in uploaded_files:
         file_name = uploaded_file.name
@@ -147,95 +96,20 @@ def color_rows(row):
     return ['background-color: {}'.format(TAGS_COLORS_MAP[row['categoria']])] * len(row)
 
 
-def add_tags(data, tags_map, col_name, default_tag='otros'):
+def add_tags(tags_map, col_name, default_tag='otros'):
+    data = st.session_state.movimientos
     for tag, keywords in tags_map.items():
         for keyword in keywords:
             if tag == "ignore":
                 data.loc[data['nombre'].str.lower() == keyword.lower(), col_name] = tag
             else:
                 data.loc[data['nombre'].str.contains(keyword, case=False), col_name] = tag
-    data[col_name] = data[col_name].fillna(default_tag) 
-
-    return data
+    data[col_name] = data[col_name].fillna(default_tag)
 
 
 def generate_id(row):
     row_str = f"{row['date']}{row['nombre']}{row['categoria']}{row['alias']}"
     return hashlib.md5(row_str.encode()).hexdigest()
-
-
-def add_expense_form():
-    st.subheader("Agregar nuevo gasto")
-
-    date = st.date_input("Fecha", value=datetime.now()).strftime('%Y-%m-%d 00:00:00')
-    nombre = st.text_input("Nombre")
-    categoria = st.selectbox("Categoría", options=list(TAGS_NAMES_MAP.keys()))
-    alias = st.text_input("Alias")
-    monto = st.text_input("monto")
-
-    if st.button("Agregar gasto"):
-        if date and nombre and categoria:
-            new_row = {
-                'date': date,
-                'nombre': nombre,
-                'categoria': categoria,
-                'alias': alias,
-                'monto': monto.replace('.', '').replace(',', '.')
-            }
-            new_row['id'] = generate_id(new_row)
-
-            conn = sqlite3.connect(DB_NAME)
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO movimientos (date, nombre, categoria, alias, monto, id)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (new_row['date'], new_row['nombre'], new_row['categoria'], new_row['alias'], new_row['monto'], new_row['id']))
-            save_table_to_df(conn)
-
-            st.success("Gasto agregado con éxito.")
-            st.rerun()
-        else:
-            st.error("Por favor, complete todos los campos.")
-
-
-def draw_editable_table(df):
-    gb = GridOptionsBuilder.from_dataframe(df)
-    gb.configure_default_column(editable=True)
-    grid_options = gb.build()
-
-    response = AgGrid(
-        df,
-        gridOptions=grid_options,
-        update_mode=GridUpdateMode.MODEL_CHANGED,
-        fit_columns_on_grid_load=True
-    )
-
-    st.session_state.editable_data = response['data']
-
-
-def edit_data(df):
-    st.subheader("Editar Datos")
-    col1, col2 = st.columns([1, 1])
-                
-    with col1:
-        if st.button("Mostrar/Ocultar tabla editable"):
-            if 'show_editable_table' not in st.session_state:
-                st.session_state.show_editable_table = True
-            else:
-                st.session_state.show_editable_table = not st.session_state.show_editable_table
-
-    if st.session_state.get('show_editable_table', False):
-        draw_editable_table(df)
-
-    with col2:
-        if st.button("Guardar cambios"):
-            if 'editable_data' in st.session_state:
-                data = load_db()
-                modified_df = st.session_state.editable_data
-                modified_df['date'] = pd.to_datetime(modified_df['date'])
-                modified_data = concat_by_id(modified_df, data)
-                save_to_db(modified_data)
-                st.rerun()
 
 
 def create_month_range_picker():
@@ -265,82 +139,122 @@ def create_custom_range_picker():
         st.session_state.end_datetime = date_range_string[1]
 
 
-def filter_data_by_date(data):
+def filter_data_by_date():
+    data = st.session_state.movimientos
     if 'start_datetime' in st.session_state and 'end_datetime' in st.session_state:
         start_date = st.session_state.start_datetime
         end_date = st.session_state.end_datetime
         return data[(data['date'] >= start_date) & (data['date'] <= end_date)]
-    return data
+
+
+def add_alias_form():
+    st.write("### Alias")
+    blank_row = {"alias_name": ["Insert name"], "keyword": "Insert keyword"}
+    if 'inserting_row_alias' not in st.session_state:
+        st.session_state.inserting_row_alias = False
+
+    if st.button("Agregar alias"):
+        st.session_state.inserting_row_alias = True
+
+    if st.session_state.inserting_row_alias:
+        st.session_state.row_to_insert_alias = st.data_editor(
+            pd.DataFrame(blank_row, columns=['alias_name', 'keyword']),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "alias": st.column_config.SelectboxColumn(
+                    "alias",
+                    required=True,
+                ),
+                "str": st.column_config.SelectboxColumn(
+                    "str",
+                    required=True,
+                ),
+            },
+        )
+
+    if st.button("Confirmar alias"):
+        if st.session_state.row_to_insert_alias is not blank_row:
+            row = st.session_state.row_to_insert_alias
+            tag_name = row['alias_name'][0].strip()
+            keywords = row['keyword'].item().strip().split(',')
+            if tag_name not in ALIAS_NAMES_MAP:
+                ALIAS_NAMES_MAP[tag_name] = []
+            ALIAS_NAMES_MAP[tag_name].extend(keywords)
+            alias_name_map = [{'id': i, 'tag_name': k, 'keywords': ','.join(set(v))} for i, (k, v) in enumerate(ALIAS_NAMES_MAP.items())]
+            try:
+                save_dataframe_to_spreadsheet(sheet_name='alias', dataframe=pd.DataFrame(alias_name_map))
+                st.success(f"Etiqueta '{tag_name}' agregada con éxito.")
+                del st.session_state['inserting_row']
+            except Exception as e:
+                st.error(f"Error al guardar la etiqueta: {e}")
 
 
 def add_tags_form():
-    st.subheader("Agregar nueva etiqueta o alias")
+    st.write("### Tags")
+    blank_row = {"tag_name": ["Insert name"], "keywords": "Insert keywords"}
+    if 'inserting_row' not in st.session_state:
+        st.session_state.inserting_row = False
 
-    st.session_state.selection = st.selectbox("Seleccionar tipo", ["tags", "alias"])
+    if st.button("Agregar tags"):
+        st.session_state.inserting_row = True
 
-    # Default to tags if not selected
-    if 'selection' not in st.session_state:
-        st.session_state.selection = "tags"
+    if st.session_state.inserting_row:
+        st.session_state.row_to_insert = st.data_editor(
+            pd.DataFrame(blank_row, columns=['tag_name', 'keywords']),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "tags": st.column_config.SelectboxColumn(
+                    "tags",
+                    required=True,
+                ),
+                "query_str": st.column_config.SelectboxColumn(
+                    "query_str",
+                    required=True,
+                ),
+            },
+        )
 
-    if st.session_state.selection == "tags":
-        tag_name = st.selectbox("Nombre de la etiqueta", options=list(TAGS_NAMES_MAP.keys()) + ["Agregar nueva etiqueta"])
-        
-        if tag_name == "Agregar nueva etiqueta":
-            tag_name = st.text_input("Ingrese el nombre de la nueva etiqueta")
-            TAGS_NAMES_MAP[tag_name] = []
-        keywords = st.text_area("Palabras clave (separadas por comas)")
-
-        if st.button("Agregar etiqueta"):
-            if tag_name and keywords:
-                new_keywords = [kw.strip() for kw in keywords.split(",")]
-                TAGS_NAMES_MAP[tag_name].extend(new_keywords)
-                save_tags_to_db(TAGS_NAMES_MAP, 'tags')
-
+    if st.button("Confirmar"):
+        if st.session_state.row_to_insert is not blank_row:
+            row = st.session_state.row_to_insert
+            tag_name = row['tag_name'][0].strip()
+            keywords = row['keywords'].item().strip().split(',')
+            if tag_name not in TAGS_NAMES_MAP:
+                TAGS_NAMES_MAP[tag_name] = []
+            TAGS_NAMES_MAP[tag_name].extend(keywords)
+            tags_name_map = [{'id': i, 'tag_name': k, 'keywords': ','.join(set(v))} for i, (k, v) in enumerate(TAGS_NAMES_MAP.items())]
+            try:
+                save_dataframe_to_spreadsheet(sheet_name='tags', dataframe=pd.DataFrame(tags_name_map))
                 st.success(f"Etiqueta '{tag_name}' agregada con éxito.")
-            else:
-                st.error("Por favor, complete todos los campos.")
-    elif st.session_state.selection == "alias":
-        alias_name = st.text_input("Nombre alias")
-        keywords = st.text_input("query para tagear alias segun nombre")
-
-        if st.button("Agregar alias"):
-            if alias_name and keywords:
-                if alias_name not in ALIAS_NAMES_MAP:
-                    ALIAS_NAMES_MAP[alias_name] = []
-                new_keywords = [kw.strip() for kw in keywords.split(",")]
-                ALIAS_NAMES_MAP[alias_name].extend(new_keywords)
-                save_tags_to_db(ALIAS_NAMES_MAP, 'alias')
-
-                st.success(f"Alias '{alias_name}' agregado con éxito.")
-            else:
-                st.error("Por favor, complete todos los campos.")
+                del st.session_state['inserting_row']
+            except Exception as e:
+                st.error(f"Error al guardar la etiqueta: {e}")
 
 
 def search_expense_panel():
     st.subheader("Buscar Gasto")
 
     search_option = st.selectbox("Buscar por", ["ID", "Nombre", "tags", "alias"])
+    table_map = {
+        "ID": MOVIMIENTOS,
+        "Nombre": MOVIMIENTOS,
+        "tags": "tags",
+        "alias": "alias"
+    }
     search_query = st.text_input("Ingrese el valor de búsqueda")
 
     if st.button("Buscar"):
+        result_df = spreadsheet_to_pandas(table_map[search_option])
         if search_option == "ID":
-            table = MOVIMIENTOS
-            query = f"SELECT * FROM {table} WHERE id = '{search_query}'"
+            result_df = result_df[result_df['id'] == search_query]
         elif search_option == "Nombre":
-            table = MOVIMIENTOS
-            query = f"SELECT * FROM {table} WHERE nombre LIKE '%{search_query}%'"
-        elif search_option == "tags":
-            table = "tags"
-            query = f"SELECT * FROM {table}"
-        elif search_option == "alias":
-            table = "alias"
-            query = f"SELECT * FROM {table}"
+            result_df = result_df[result_df['nombre'].str.contains(search_query, case=False)]
+        elif search_option == "tags" or search_option == "alias":
+            result_df = result_df[result_df['tag_name'] == search_query]
         
-        conn = sqlite3.connect(DB_NAME)
-        result_df = pd.read_sql_query(query, conn)
-        conn.close()
-
-        st.session_state['search_results'] = result_df.to_dict('records'), table
+        st.session_state['search_results'] = result_df.to_dict('records'), table_map[search_option]
 
     if 'search_results' in st.session_state:
         result_df_saved, table = st.session_state['search_results']
@@ -353,7 +267,7 @@ def search_expense_panel():
                     st.write(row.to_frame().T)
                 with col2:
                     if st.button("Eliminar", key=f"delete_{row['id']}"):
-                        delete_expense(row['id'], table)
+                        delete_expense(row['id'], table, result_df)
                         with col1:
                             st.success(f"Gasto con ID {row['id']} eliminado.")
                         st.session_state['search_results'] = result_df[result_df['id'] != row['id']].to_dict('records'), table
@@ -363,15 +277,15 @@ def search_expense_panel():
             st.write("No se encontraron resultados.")
 
 
-def delete_expense(expense_id, table):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute(f"DELETE FROM {table} WHERE id = ?", (expense_id,))
-    save_table_to_df(conn, table_name=table)
+def delete_expense(expense_id, table, df):
+    df = df[df['id'] != expense_id]
+    save_dataframe_to_spreadsheet(table, df)
 
 
 def create_category_buttons():
     categories = ["todos"] + list(TAGS_NAMES_MAP.keys())
+    categories.remove("ignore")
+    categories.append("otros")
     cols = st.columns(len(categories))
 
     for i, category in enumerate(categories):
@@ -379,14 +293,16 @@ def create_category_buttons():
             st.session_state.selected_category = category
 
 
-def filter_ignore_tags(data):
-    return data[data['categoria'] != 'ignore']
+def filter_ignore_tags():
+    data = st.session_state.movimientos
+    st.session_state.movimientos = data[data['categoria'] != 'ignore']
 
 
 def pfinance_app():
     create_custom_range_picker()
     create_month_range_picker()
     if uploaded_files := st.file_uploader("Subir archivos", type=VALID_EXTENSIONS, accept_multiple_files=True):
+        check_for_credentials(uploaded_files)
         load_data_from_files(uploaded_files)
 
     st.title("Categorias")
@@ -394,13 +310,14 @@ def pfinance_app():
     if 'selected_category' not in st.session_state:
         st.session_state.selected_category = "todos"
 
-    data = load_db()
-    data = add_tags(data, tags_map=TAGS_NAMES_MAP, col_name='categoria')
-    data = add_tags(data, tags_map=ALIAS_NAMES_MAP, col_name='alias', default_tag="")
-    data = filter_data_by_date(data)
-    data = filter_ignore_tags(data)
+    load_db()
+    add_tags(tags_map=TAGS_NAMES_MAP, col_name='categoria')
+    add_tags(tags_map=ALIAS_NAMES_MAP, col_name='alias', default_tag="")
+    filter_data_by_date()
+    filter_ignore_tags()
     create_category_buttons()
-
+    
+    data = st.session_state.movimientos
     st.write(f'### Distribucion de gastos entre: {st.session_state.start_datetime} y {st.session_state.end_datetime}')
     if st.session_state.selected_category == "todos":
         grouped_data = data.groupby('categoria')['monto'].sum().reset_index()
@@ -436,22 +353,9 @@ def pfinance_app():
     width = 200 + len(styled_df.data.columns) * 150
     st.dataframe(styled_df, hide_index=True, column_config={"color": None, "id": None, "label": None, 'raw': None}, width=width)
 
-    edit_data(styled_df.data)
     add_tags_form()
-    add_expense_form()
+    add_alias_form()
     search_expense_panel()
-    download_db()
-
-
-def download_db():
-    try:
-        data = open('movimientos.db', 'rb').read()
-        current_date = datetime.now().strftime("%Y-%m-%d")
-        file_name = f'movimientos_{current_date}.db'
-        if st.download_button(label="Descargar base de datos", data=data, file_name=file_name, mime='application/octet-stream'):
-            st.success("Base de datos descargada con éxito.")
-    except Exception as e:
-        st.error(f"Error al descargar la base de datos: {e}")
 
 
 if __name__ == "__main__":

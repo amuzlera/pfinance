@@ -1,6 +1,8 @@
 import sqlite3
 import plotly.express as px
 
+from spreadsheets import spreadsheet_to_pandas
+
 def generate_distinct_colors(n=15):
     colors = px.colors.qualitative.Plotly
     if n <= len(colors):
@@ -29,11 +31,17 @@ def get_data_from_db(table_name):
     return data_map
 
 
-SPREADSHEET_NAME = 'finanzas'
-CREDENTIALS_FILE = 'client_secret.json'
+def get_data(sheet_name):
+    df = spreadsheet_to_pandas(sheet_name=sheet_name)
+    if df.empty:
+        return {}
+    data_map = df.set_index('tag_name')['keywords'].apply(lambda x: x.split(',')).to_dict()
+    return data_map
+
+
 DB_NAME = "movimientos.db"
-TAGS_NAMES_MAP = get_data_from_db('tags')
-ALIAS_NAMES_MAP = get_data_from_db('alias')
+TAGS_NAMES_MAP = get_data('tags')
+ALIAS_NAMES_MAP = get_data('alias')
 VALID_EXTENSIONS = (".xlsx", ".xls", ".pdf", ".db", ".json")
 TAGS_COLORS_MAP = {tag: color for tag, color in zip(TAGS_NAMES_MAP.keys(), generate_distinct_colors(len(TAGS_NAMES_MAP)))}
 TAGS_COLORS_MAP["otros"] = "gray" # por que si
