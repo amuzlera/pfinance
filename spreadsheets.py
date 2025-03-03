@@ -1,6 +1,7 @@
 import pandas as pd
 import json
 import gspread
+import plotly.express as px
 
 from oauth2client.service_account import ServiceAccountCredentials
 
@@ -37,3 +38,33 @@ def save_dataframe_to_spreadsheet(sheet_name, dataframe):
         pass
     worksheet = sheet.add_worksheet(title=sheet_name, rows=dataframe.shape[0] + 1, cols=dataframe.shape[1])
     worksheet.update([dataframe.columns.values.tolist()] + dataframe.values.tolist())
+
+
+def generate_distinct_colors(n=15):
+    colors = px.colors.qualitative.Plotly
+    if n <= len(colors):
+        return colors[:n]
+    else:
+        return colors * (n // len(colors)) + colors[:n % len(colors)]
+
+
+def get_data(sheet_name):
+    df = spreadsheet_to_pandas(sheet_name=sheet_name)
+    if df.empty:
+        return {}
+    data_map = df.set_index('tag_name')['keywords'].apply(lambda x: x.split(',')).to_dict()
+    return data_map
+
+
+def get_tags_colors_map(tags_names_map):
+    tags_colors_map = {tag: color for tag, color in zip(tags_names_map.keys(), generate_distinct_colors(len(tags_names_map)))}
+    tags_colors_map["otros"] = "gray"  # por que si
+    return tags_colors_map
+
+
+def get_tags_names_map():
+    return get_data('tags')
+
+
+def get_alias_names_map():
+    return get_data('alias')

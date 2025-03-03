@@ -9,10 +9,11 @@ from datetime import datetime, timedelta
 from time import sleep
 import hashlib
 from streamlit_date_picker import date_range_picker, PickerType
-from constants import TAGS_COLORS_MAP, TAGS_NAMES_MAP, ALIAS_NAMES_MAP, VALID_EXTENSIONS, DB_NAME
-from spreadsheets import save_dataframe_to_spreadsheet, spreadsheet_to_pandas, CREDENTIALS_FILE
+from spreadsheets import get_alias_names_map, get_tags_colors_map, get_tags_names_map, save_dataframe_to_spreadsheet, spreadsheet_to_pandas, CREDENTIALS_FILE
 
 MOVIMIENTOS = 'movimientos'
+DB_NAME = "movimientos.db"
+VALID_EXTENSIONS = (".xlsx", ".xls", ".pdf", ".db", ".json")
 
 
 def load_db():
@@ -93,7 +94,7 @@ def order_df(df):
 
 
 def color_rows(row):
-    return ['background-color: {}'.format(TAGS_COLORS_MAP[row['categoria']])] * len(row)
+    return ['background-color: {}'.format(st.session_state.tags_colors_map[row['categoria']])] * len(row)
 
 
 def add_tags(tags_map, col_name, default_tag='otros'):
@@ -144,7 +145,7 @@ def filter_data_by_date():
     if 'start_datetime' in st.session_state and 'end_datetime' in st.session_state:
         start_date = st.session_state.start_datetime
         end_date = st.session_state.end_datetime
-        return data[(data['date'] >= start_date) & (data['date'] <= end_date)]
+        st.session_state.movimientos = data[(data['date'] >= start_date) & (data['date'] <= end_date)]
 
 
 def add_alias_form():
@@ -178,10 +179,10 @@ def add_alias_form():
             row = st.session_state.row_to_insert_alias
             tag_name = row['alias_name'][0].strip()
             keywords = row['keyword'].item().strip().split(',')
-            if tag_name not in ALIAS_NAMES_MAP:
-                ALIAS_NAMES_MAP[tag_name] = []
-            ALIAS_NAMES_MAP[tag_name].extend(keywords)
-            alias_name_map = [{'id': i, 'tag_name': k, 'keywords': ','.join(set(v))} for i, (k, v) in enumerate(ALIAS_NAMES_MAP.items())]
+            if tag_name not in st.session_state.alias_names_map:
+                st.session_state.alias_names_map[tag_name] = []
+            st.session_state.alias_names_map[tag_name].extend(keywords)
+            alias_name_map = [{'id': i, 'tag_name': k, 'keywords': ','.join(set(v))} for i, (k, v) in enumerate(st.session_state.alias_names_map.items())]
             try:
                 save_dataframe_to_spreadsheet(sheet_name='alias', dataframe=pd.DataFrame(alias_name_map))
                 st.success(f"Etiqueta '{tag_name}' agregada con éxito.")
@@ -221,10 +222,10 @@ def add_tags_form():
             row = st.session_state.row_to_insert
             tag_name = row['tag_name'][0].strip()
             keywords = row['keywords'].item().strip().split(',')
-            if tag_name not in TAGS_NAMES_MAP:
-                TAGS_NAMES_MAP[tag_name] = []
-            TAGS_NAMES_MAP[tag_name].extend(keywords)
-            tags_name_map = [{'id': i, 'tag_name': k, 'keywords': ','.join(set(v))} for i, (k, v) in enumerate(TAGS_NAMES_MAP.items())]
+            if tag_name not in st.session_state.tags_names_map:
+                st.session_state.tags_names_map[tag_name] = []
+            st.session_state.tags_names_map[tag_name].extend(keywords)
+            tags_name_map = [{'id': i, 'tag_name': k, 'keywords': ','.join(set(v))} for i, (k, v) in enumerate(st.session_state.tags_names_map.items())]
             try:
                 save_dataframe_to_spreadsheet(sheet_name='tags', dataframe=pd.DataFrame(tags_name_map))
                 st.success(f"Etiqueta '{tag_name}' agregada con éxito.")
@@ -283,7 +284,7 @@ def delete_expense(expense_id, table, df):
 
 
 def create_category_buttons():
-    categories = ["todos"] + list(TAGS_NAMES_MAP.keys())
+    categories = ["todos"] + list(st.session_state.tags_names_map.keys())
     categories.remove("ignore")
     categories.append("otros")
     cols = st.columns(len(categories))
@@ -305,14 +306,23 @@ def pfinance_app():
         check_for_credentials(uploaded_files)
         load_data_from_files(uploaded_files)
 
+    if os.path.exists(CREDENTIALS_FILE):
+        st.session_state.tags_names_map = get_tags_names_map()
+        st.session_state.alias_names_map = get_alias_names_map()
+        st.session_state.tags_colors_map = get_tags_colors_map(st.session_state.tags_names_map)
+    else:
+        st.error("Por favor, suba el archivo de credenciales de Google Sheets.")
+        return
+
     st.title("Categorias")
 
     if 'selected_category' not in st.session_state:
         st.session_state.selected_category = "todos"
+        return
 
     load_db()
-    add_tags(tags_map=TAGS_NAMES_MAP, col_name='categoria')
-    add_tags(tags_map=ALIAS_NAMES_MAP, col_name='alias', default_tag="")
+    add_tags(tags_map=st.session_state.tags_names_map, col_name='categoria')
+    add_tags(tags_map=st.session_state.alias_names_map, col_name='alias', default_tag="")
     filter_data_by_date()
     filter_ignore_tags()
     create_category_buttons()
@@ -321,13 +331,13 @@ def pfinance_app():
     st.write(f'### Distribucion de gastos entre: {st.session_state.start_datetime} y {st.session_state.end_datetime}')
     if st.session_state.selected_category == "todos":
         grouped_data = data.groupby('categoria')['monto'].sum().reset_index()
-        grouped_data['color'] = grouped_data['categoria'].map(TAGS_COLORS_MAP)
+        grouped_data['color'] = grouped_data['categoria'].map(st.session_state.tags_colors_map)
         filtered_data = grouped_data
         filter_column = 'categoria'
         total_amount = filtered_data['monto'].sum()
         filtered_data_all_positive = filtered_data.copy()
         filtered_data_all_positive['monto'] = filtered_data_all_positive['monto'].abs()
-        fig = px.pie(filtered_data_all_positive, names=filter_column, values='monto', color='categoria', color_discrete_map=TAGS_COLORS_MAP, hole=0.4)
+        fig = px.pie(filtered_data_all_positive, names=filter_column, values='monto', color='categoria', color_discrete_map=st.session_state.tags_colors_map, hole=0.4)
         fig.add_annotation(text=f"${total_amount:,.0f}", x=0.5, y=0.5, font_size=20, showarrow=False)
         selected_point = st.plotly_chart(fig, use_container_width=True)
         styled_df = data.style.apply(color_rows, axis=1)
