@@ -29,15 +29,30 @@ def spreadsheet_to_pandas(sheet_name):
 
 
 def save_dataframe_to_spreadsheet(sheet_name, dataframe):
-    print(dataframe)
     sheet = get_data_from_spreadsheet()
+    dataframe = dataframe.map(lambda x: x.strftime('%Y-%m-%d') if isinstance(x, pd.Timestamp) else x)
+    dataframe = dataframe.replace([pd.NA, pd.NaT, float('inf'), float('-inf'), pd.NaT, pd.NA, float('nan')], None)
+
     try:
         worksheet = sheet.worksheet(sheet_name)
+        renamed_sheet_name = f"{sheet_name}_backup"
+        if renamed_sheet_name in [ws.title for ws in sheet.worksheets()]:
+            sheet.del_worksheet(sheet.worksheet(renamed_sheet_name))
+        sheet.duplicate_sheet(worksheet.id, new_sheet_name=renamed_sheet_name)
         sheet.del_worksheet(worksheet)
     except gspread.exceptions.WorksheetNotFound:
         pass
-    worksheet = sheet.add_worksheet(title=sheet_name, rows=dataframe.shape[0] + 1, cols=dataframe.shape[1])
-    worksheet.update([dataframe.columns.values.tolist()] + dataframe.values.tolist())
+
+    try:
+        worksheet = sheet.add_worksheet(title=sheet_name, rows=dataframe.shape[0] + 1, cols=dataframe.shape[1])
+        worksheet.update([dataframe.columns.values.tolist()] + dataframe.values.tolist())
+        if 'renamed_sheet_name' in locals():
+            sheet.del_worksheet(sheet.worksheet(renamed_sheet_name))
+    except Exception as e:
+        if 'renamed_sheet_name' in locals():
+            sheet.del_worksheet(worksheet)
+            sheet.worksheet(renamed_sheet_name).update_title(sheet_name)
+        raise e
 
 
 def generate_distinct_colors(n=15):

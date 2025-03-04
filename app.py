@@ -47,7 +47,8 @@ def check_for_credentials(uploaded_files):
                     f.write(uploaded_file.getbuffer())
 
 
-def parse_from_files(df, uploaded_files):
+def parse_from_files(uploaded_files):
+    df = st.session_state.movimientos
     if uploaded_files:
         for uploaded_file in uploaded_files:
             file_name = uploaded_file.name
@@ -73,8 +74,8 @@ def parse_from_files(df, uploaded_files):
 
 
 def load_data_from_files(uploaded_files):
-    old_data = load_db()
-    data = parse_from_files(old_data, uploaded_files)
+    load_db()
+    data = parse_from_files(uploaded_files)
     data['id'] = data['id'].astype(str)
     save_dataframe_to_spreadsheet(MOVIMIENTOS, data)
     # Eliminar archivos subidos después de procesarlos
