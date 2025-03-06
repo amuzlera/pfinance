@@ -78,12 +78,6 @@ def load_data_from_files(uploaded_files):
     data = parse_from_files(uploaded_files)
     data['id'] = data['id'].astype(str)
     save_dataframe_to_spreadsheet(MOVIMIENTOS, data)
-    # Eliminar archivos subidos después de procesarlos
-    for uploaded_file in uploaded_files:
-        file_name = uploaded_file.name
-        file_path = os.path.join('files', file_name)
-        if os.path.exists(file_path):
-            os.remove(file_path)
 
 
 def order_df(df):
