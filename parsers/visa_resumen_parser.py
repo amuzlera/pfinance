@@ -4,7 +4,7 @@ import re
 import requests
 from datetime import datetime
 
-MONTHS = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre")
+MONTHS = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septie.", "octubre", "noviem.", "diciem.")
 
 
 def transform_usd_to_ars(data):
@@ -13,6 +13,18 @@ def transform_usd_to_ars(data):
     data['monto'] = data.apply(lambda row: row['monto'] * usd_to_ars if "usd" in row['nombre'].lower() else row['monto'], axis=1)
     return data
 
+def is_two_digit_number(text):
+    return text.isdigit() and len(text) == 2
+
+
+def is_month(text):
+    return text.lower() in MONTHS
+
+
+def is_id(text):
+    return text.isdigit() and len(text) == 6
+
+
 def get_consumos(text):
     # Dividir el texto en líneas
     lines = text.split("\n")
@@ -20,18 +32,14 @@ def get_consumos(text):
     # Eliminar líneas vacías
     lines = [line for line in lines if line.strip()]
     lines = lines[::-1]
-    consumos = []
-    append_line = False
     for line in lines:
-        if all(w in line for w in ("Tarjeta", "Total Consumos de")):
-            append_line = True
-            continue
-        if append_line:
-            if all(w in line for w in ("Fecha", "Comprobante Referencia")) or all(w in line for w in ("_______________")):
-                append_line = False
-            else:
-                consumos.append(line)
-    return consumos[::-1]
+        line_parts = line.split(" ")
+        if is_two_digit_number(line_parts[0]):
+            if is_month(line_parts[1]):
+                if is_two_digit_number(line_parts[2]) and is_id(line_parts[3]):
+                    yield line
+            elif is_id(line_parts[1]):
+                yield line
 
 
 def parse_consumo(consumo):
@@ -54,14 +62,16 @@ def parse_consumo(consumo):
                 consumo_dict["month"] = parts[-2].replace(".", "")
                 consumo_dict["year"] = parts[-1]
             break
-            
+
     consumo_dict["nombre"] = ("-").join(consumo_name[::-1])
     return consumo_dict
+
 
 def get_month(month):
     for i, m in enumerate(MONTHS):
         if month.lower() in m:
             return i+1
+
 
 def get_consumos_from_file(pdf_path):
     with pdfplumber.open(pdf_path) as pdf:
@@ -71,7 +81,8 @@ def get_consumos_from_file(pdf_path):
             text = page.extract_text()
             if cons := get_consumos(text):
                 consumos.extend(cons)
-        return consumos[::-1]
+        return consumos
+
 
 def create_df_from_pdf(pdf_path):
     consumos_list = [parse_consumo(c) for c in get_consumos_from_file(pdf_path)]
@@ -92,6 +103,13 @@ def create_df_from_pdf(pdf_path):
 
     return df
 
+
 def chech_total_amounts():
     #TODO sumar todos los gastos y comprobar con el total a pagar, esto evidencia que no se ha omitido ningun gasto
     pass
+
+
+if __name__ == "__main__":
+    df = create_df_from_pdf("/home/amuzlera/projects/p2/pfinance/files/Resumen de tarjeta de crédito VISA-06-01-2025.pdf")
+    print(df)
+    # save_dataframe_to_spreadsheet("visa_resumen", df)

@@ -68,7 +68,7 @@ def parse_from_files(uploaded_files):
                 df = concat_by_id(df, parse_movimientos_santander(file_path))
             elif "Resumen de tarjeta de crédito" in file_name:
                 df = concat_by_id(df, create_df_from_pdf(file_path))
-            elif "download" in file_name:
+            elif "download" in file_name or "mp-wallet" in file_name:
                 df = concat_by_id(df, parse_transactions_from_mp(file_path))
     return df
 
